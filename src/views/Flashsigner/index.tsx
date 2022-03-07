@@ -1,94 +1,94 @@
 import React, { useEffect } from 'react'
 import { useHistory } from 'react-router-dom'
-import { scriptToAddress } from '@nervosnetwork/ckb-sdk-utils/lib/address'
 import { useSetAccount, WalletType } from '../../hooks/useAccount'
 import { useProfile } from '../../hooks/useProfile'
-import { useRouteQuery } from '../../hooks/useRouteQuery'
-import {
-  FlashsignerAction,
-  FlashsignerResponse,
-  FlashsignerLoginData,
-  FlashsignerSignData,
-} from '../../models/flashsigner'
 import { RoutePath } from '../../routes'
 import { UnipassConfig } from '../../utils'
-import { IS_MAINNET } from '../../constants'
+import { getResultFromURL, FlashsignerAction } from '@nervina-labs/flashsigner'
+import { FlashsignerAction as LocalFlashsignerAction } from '../../models/flashsigner'
 
 export const Flashsigner: React.FC = () => {
-  const action = useRouteQuery<FlashsignerAction>(
-    'action',
-    FlashsignerAction.Login
-  )
-  const ret = useRouteQuery('flashsigner_data', '{}')
-  const res: FlashsignerResponse = JSON.parse(ret)
   const history = useHistory()
   const setFlashsignerAccount = useSetAccount()
   const { setProfile, profile } = useProfile()
-  const ps = useRouteQuery('prev_state', '{}')
-  const prevState = JSON.parse(ps)
-  const redirectUri = useRouteQuery('redirect', '')
 
   useEffect(() => {
-    const { code } = res
-    switch (action) {
-      case FlashsignerAction.Login: {
+    getResultFromURL<any>({
+      onLogin(res) {
         UnipassConfig.clear()
-        if (code !== 200) {
-          history.replace(redirectUri || RoutePath.Login)
-          break
-        }
-        const data = res?.result as FlashsignerLoginData
-        const addr = scriptToAddress(
-          {
-            hashType: data.lock.hash_type,
-            codeHash: data.lock.code_hash,
-            args: data.lock.args,
-          },
-          IS_MAINNET
-        )
-        const pubkey = data.sig.slice(0, 520)
+        const { address, pubkey, signature, message, extra } = res
         setFlashsignerAccount({
           pubkey,
-          address: addr,
+          address: address,
           walletType: WalletType.Flashsigner,
         })
         setProfile(
           {
-            auth: data.sig,
-            message: data.message,
+            auth: signature,
+            message: message,
           },
-          addr
+          address
         )
-        history.replace(redirectUri || RoutePath.NFTs)
-        break
-      }
-      case FlashsignerAction.SignTx: {
-        const id = prevState.uuid as string
-        if (code !== 200) {
-          history.replace(`/transfer/${id}`, {
-            prevState,
+        history.replace(extra?.redirect || RoutePath.NFTs)
+      },
+      onSignMessage(result) {
+        const action = result.extra?.action as LocalFlashsignerAction
+        if (action === LocalFlashsignerAction.SendRedEnvelope) {
+          history.replace(`${RoutePath.RedEnvelope}`, {
+            signature: result.signature,
+            ...result.extra,
           })
-          break
+        } else if (action === LocalFlashsignerAction.Redeem) {
+          const { uuid } = result.extra
+          const state: Record<string, any> = {
+            signature: result.signature,
+            customData: result.extra?.customData,
+          }
+          history.replace(`${RoutePath.RedeemResult}/${uuid as string}`, state)
         }
-        const data = res?.result as FlashsignerSignData
-        history.replace(`/transfer/${id}`, {
-          tx: data.tx,
-          prevState,
+      },
+      onSignTransaction(result) {
+        const action = result.extra?.action as LocalFlashsignerAction
+        const { transaction } = result
+        switch (action) {
+          case LocalFlashsignerAction.SendRedEnvelope: {
+            history.replace(`${RoutePath.RedEnvelope}`, {
+              tx: transaction,
+              prevState: result.extra,
+            })
+            break
+          }
+          case LocalFlashsignerAction.Redeem:
+          default: {
+            const { uuid } = result.extra
+            const state: Record<string, any> = {
+              tx: transaction,
+              customData: result.extra?.customData,
+            }
+            history.replace(
+              `${RoutePath.RedeemResult}/${uuid as string}`,
+              state
+            )
+            break
+          }
+        }
+      },
+      onTransferMnft(res) {
+        history.replace(`/transfer/${res.extra?.uuid as string}`, {
+          tx: res.transaction,
+          prevState: res.extra,
         })
-        break
-      }
-      default:
-        break
-    }
-  }, [
-    res,
-    action,
-    history,
-    setProfile,
-    setFlashsignerAccount,
-    profile,
-    prevState,
-    redirectUri,
-  ])
+      },
+      onError(_, action, extra) {
+        if (action === FlashsignerAction.TransferMnft) {
+          history.replace(`/transfer/${extra?.uuid as string}`)
+        } else if (action === FlashsignerAction.SignTransaction) {
+          history.replace(extra?.prevPath || RoutePath.NFTs)
+        } else {
+          history.replace(extra?.redirect || RoutePath.NFTs)
+        }
+      },
+    })
+  }, [history, setProfile, setFlashsignerAccount, profile])
   return null
 }

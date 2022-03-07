@@ -43,6 +43,7 @@ const TranferOrBuy: React.FC<{
   const ownCurrentToken = useMemo(() => {
     return (
       detail &&
+      address &&
       !isTokenClass(detail) &&
       verifyCkbAddress(detail.to_address!) &&
       addressToScript(detail.to_address!).args ===
@@ -64,7 +65,8 @@ const TranferOrBuy: React.FC<{
   const { data: user } = useQuery(
     [Query.Tags, api],
     async () => {
-      const data = await api.getProfile()
+      const auth = await getAuth()
+      const data = await api.getProfile('', auth)
       return data
     },
     {

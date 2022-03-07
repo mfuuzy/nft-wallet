@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { core } from '@ckb-lumos/base'
 import { PER_ITEM_LIMIT, SERVER_URL } from '../constants'
 import {
   ClassSortType,
@@ -14,6 +15,9 @@ import {
   Transaction,
   TransactionLogResponse,
   UnsignedTransaction,
+  UnsignedTransactionSendRedEnvelope,
+  GeeTestResponse,
+  GeeTestOptions,
 } from '../models'
 import {
   Issuer,
@@ -64,10 +68,17 @@ import { RankingListResponse } from '../models/rank'
 import { PaymentChannel } from '../hooks/useOrder'
 import {
   OpenRedEnvelopeResponse,
+  ReceivedRedEnvelopeRecordItem,
+  ReceivedRedEnvelopeRecords,
   RedEnvelopeRecords,
   RedEnvelopeResponse,
+  RuleType,
+  SentRedEnvelopeDetail,
+  SentRedEnvelopeRecords,
+  SentRedEnvelopeReword,
 } from '../models/red-envelope'
-import { isPwTransaction } from '../utils'
+import { generateOldAddress, isPwTransaction } from '../utils'
+import { WalletType } from '../hooks/useAccount'
 
 function randomid(length = 10): string {
   let result = ''
@@ -126,6 +137,7 @@ export class ServerWalletAPI {
     options?: {
       address?: string
       exclude_banned?: boolean
+      include_submitting?: boolean
     }
   ): Promise<AxiosResponse<NFT>> {
     return await this.axios.get(
@@ -135,6 +147,7 @@ export class ServerWalletAPI {
           page,
           limit: PER_ITEM_LIMIT,
           exclude_banned: options?.exclude_banned,
+          include_submitting: options?.include_submitting,
         },
       }
     )
@@ -215,6 +228,7 @@ export class ServerWalletAPI {
 
   async submitAddress(
     uuid: string,
+    walletType: WalletType,
     auth: Auth
   ): Promise<AxiosResponse<{ code: number }>> {
     const url = `/address_packages/${uuid}/items`
@@ -222,7 +236,7 @@ export class ServerWalletAPI {
       `${SERVER_URL}${url}`.replace('/wallet/', '/saas/'),
       {
         auth,
-        address: this.address,
+        address: generateOldAddress(this.address, walletType),
       },
       {
         headers: {
@@ -320,7 +334,7 @@ export class ServerWalletAPI {
   async getTransferNftTransaction(
     uuid: string,
     toAddress: string,
-    isUnipass = true
+    walletType?: WalletType
   ): Promise<NFTTransaction> {
     // eslint-disable-next-line prettier/prettier
     const { data } = await this.axios.get<any, AxiosResponse<UnsignedTransaction>>('/token_ckb_transactions/new', {
@@ -331,7 +345,7 @@ export class ServerWalletAPI {
       },
     })
 
-    const tx = await rawTransactionToPWTransaction(data.unsigned_tx, isUnipass)
+    const tx = await rawTransactionToPWTransaction(data.unsigned_tx, walletType)
     return {
       tx,
       uuid: data.token_ckb_transaction_uuid,
@@ -361,9 +375,16 @@ export class ServerWalletAPI {
     return data
   }
 
-  async getProfile(address?: string): Promise<UserResponse> {
+  async getProfile(address: string, auth?: Auth): Promise<UserResponse> {
     try {
-      const { data } = await this.axios.get(`/users/${address ?? this.address}`)
+      const { data } = await this.axios.get(
+        `/users/${address || this.address}`,
+        {
+          headers: {
+            auth: auth ? JSON.stringify(auth) : '',
+          },
+        }
+      )
       return data
     } catch (error) {
       return Object.create(null)
@@ -380,10 +401,28 @@ export class ServerWalletAPI {
       ? (transformers.TransformTransaction(tx) as RPC.RawTransaction)
       : tx
     if (sig) {
+      const [oldWitness] = rawTx.witnesses
       const witnessArgs: WitnessArgs = {
         lock: sig,
         input_type: '',
         output_type: '',
+      }
+      try {
+        const wa = new core.WitnessArgs(new Reader(oldWitness))
+        const inputType = wa.getInputType()
+        const outputType = wa.getOutputType()
+        if (inputType.hasValue()) {
+          witnessArgs.input_type = new Reader(
+            inputType.value().raw()
+          ).serializeJson()
+        }
+        if (outputType.hasValue()) {
+          witnessArgs.output_type = new Reader(
+            outputType.value().raw()
+          ).serializeJson()
+        }
+      } catch (error) {
+        //
       }
       const witness = new Reader(
         SerializeWitnessArgs(normalizers.NormalizeWitnessArgs(witnessArgs))
@@ -454,10 +493,14 @@ export class ServerWalletAPI {
     return await this.axios.get(`/token_claim_codes/${uuid}`)
   }
 
-  async claim(uuid: string): Promise<AxiosResponse<void>> {
+  async claim(
+    uuid: string,
+    geetest: GeeTestOptions
+  ): Promise<AxiosResponse<void>> {
     return await this.axios.post('/token_claim_codes', {
       to_address: this.address,
       code: uuid,
+      geetest,
     })
   }
 
@@ -590,7 +633,7 @@ export class ServerWalletAPI {
 
   async getRedeemTransaction(
     uuid: string,
-    isUnipass = true
+    walletType?: WalletType
   ): Promise<NFTTransaction> {
     const { data } = await this.axios.get(
       `/redemption_events/${uuid}/records/new`,
@@ -601,11 +644,12 @@ export class ServerWalletAPI {
         },
       }
     )
-    const tx = await rawTransactionToPWTransaction(data.unsigned_tx, isUnipass)
+    const tx = await rawTransactionToPWTransaction(data.unsigned_tx, walletType)
 
     return {
       tx,
       uuid: data.redemption_event_uuid,
+      unSignedTx: data.unsigned_tx,
     }
   }
 
@@ -615,7 +659,9 @@ export class ServerWalletAPI {
     customData,
     sig,
   }: RedeemParams): Promise<AxiosResponse<RedeemResultResponse>> {
-    const rawTx = transformers.TransformTransaction(tx) as any
+    const rawTx = isPwTransaction(tx)
+      ? (transformers.TransformTransaction(tx) as any)
+      : tx
     if (sig) {
       const witnessArgs: WitnessArgs = {
         lock: sig,
@@ -941,5 +987,184 @@ export class ServerWalletAPI {
         ...options,
       },
     })
+  }
+
+  public async initGeeTest() {
+    return await this.axios.get<GeeTestResponse>('/geetests')
+  }
+
+  async getSendRedEnvelopeTx(
+    tokenUuids: string[],
+    auth: Auth,
+    walletType?: WalletType
+  ): Promise<AxiosResponse<UnsignedTransactionSendRedEnvelope>> {
+    const headers = {
+      auth: JSON.stringify(auth),
+    }
+    const res = await this.axios.post<UnsignedTransactionSendRedEnvelope>(
+      '/toolbox/redpack_transactions',
+      {
+        token_uuids: tokenUuids,
+      },
+      {
+        headers,
+      }
+    )
+    return {
+      ...res,
+      data: {
+        ...res.data,
+        tx: await rawTransactionToPWTransaction(
+          res.data.unsigned_tx,
+          walletType
+        ),
+      },
+    }
+  }
+
+  async createRedEnvelopeEvent(
+    greetings: string,
+    rewardAmount: number,
+    tx: PwTransaction | RPC.RawTransaction,
+    auth: Auth,
+    options?: {
+      signature?: string
+      redpackRule?: {
+        rule_type: RuleType.puzzle
+        question: string
+        answer: string
+      }
+    }
+  ) {
+    const rawTx = isPwTransaction(tx)
+      ? (transformers.TransformTransaction(tx) as RPC.RawTransaction)
+      : tx
+    if (options?.signature) {
+      const witnessArgs: WitnessArgs = {
+        lock: options.signature,
+        input_type: '',
+        output_type: '',
+      }
+      const witness = new Reader(
+        SerializeWitnessArgs(normalizers.NormalizeWitnessArgs(witnessArgs))
+      ).serializeJson()
+      rawTx.witnesses[0] = witness
+    }
+    return await this.axios.post<{ uuid: string }>(
+      '/toolbox/redpack_events',
+      {
+        redpack_event: {
+          greetings,
+          reward_amount: rewardAmount,
+          signed_tx: JSON.stringify(rawTx),
+          redpack_rule: options?.redpackRule,
+        },
+      },
+      {
+        headers: {
+          auth: JSON.stringify(auth),
+        },
+      }
+    )
+  }
+
+  async getSentRedEnvelopeDetail(uuid: string, auth: Auth) {
+    return await this.axios.get<SentRedEnvelopeDetail>(
+      `/toolbox/redpack_events/${uuid}`,
+      {
+        headers: {
+          auth: JSON.stringify(auth),
+        },
+      }
+    )
+  }
+
+  async getSentRedEnvelopeRecords(
+    auth: Auth,
+    options?: {
+      page?: number
+      limit?: number
+    }
+  ) {
+    const page = options?.page ?? 1
+    const limit = options?.limit ?? PER_ITEM_LIMIT
+    return await this.axios.get<SentRedEnvelopeRecords>(
+      '/toolbox/redpack_events',
+      {
+        headers: {
+          auth: JSON.stringify(auth),
+        },
+        params: {
+          page,
+          limit,
+        },
+      }
+    )
+  }
+
+  async closeSentRedEnvelope(uuid: string, auth: Auth) {
+    return await this.axios.delete(`/toolbox/redpack_events/${uuid}`, {
+      headers: {
+        auth: JSON.stringify(auth),
+      },
+    })
+  }
+
+  async getReceivedRedEnvelopeRecords(
+    auth: Auth,
+    options?: {
+      page?: number
+      limit?: number
+    }
+  ) {
+    const page = options?.page ?? 1
+    const limit = options?.limit ?? PER_ITEM_LIMIT
+    return await this.axios.get<ReceivedRedEnvelopeRecords>(
+      '/grabed_redpack_records',
+      {
+        headers: {
+          auth: JSON.stringify(auth),
+        },
+        params: {
+          page,
+          limit,
+        },
+      }
+    )
+  }
+
+  async getSentRedEnvelopeDetailRewards(
+    uuid: string,
+    auth: Auth,
+    options?: {
+      page?: number
+      limit?: number
+    }
+  ) {
+    const page = options?.page ?? 1
+    const limit = options?.limit ?? PER_ITEM_LIMIT
+    return await this.axios.get<SentRedEnvelopeReword>(
+      `/toolbox/redpack_events/${uuid}/reward_plan_items`,
+      {
+        headers: {
+          auth: JSON.stringify(auth),
+        },
+        params: {
+          page,
+          limit,
+        },
+      }
+    )
+  }
+
+  async getReceivedRedEnvelopeDetail(uuid: string, auth: Auth) {
+    return await this.axios.get<ReceivedRedEnvelopeRecordItem>(
+      `/grabed_redpack_records/${uuid}`,
+      {
+        headers: {
+          auth: JSON.stringify(auth),
+        },
+      }
+    )
   }
 }

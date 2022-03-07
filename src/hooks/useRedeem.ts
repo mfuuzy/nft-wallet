@@ -1,8 +1,12 @@
-import { Transaction } from '@lay2/pw-core'
+import { Transaction, transformers } from '@lay2/pw-core'
 import { atom, useAtom } from 'jotai'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useHistory, useLocation, useParams } from 'react-router'
+import { useHistory, useLocation } from 'react-router'
+import {
+  signMessageWithRedirect,
+  transactionToMessage,
+} from '@nervina-labs/flashsigner'
 import {
   CustomRedeemParams,
   CustomRewardType,
@@ -19,6 +23,7 @@ import {
 import { useConfirmDialog } from './useConfirmDialog'
 import { useToast } from './useToast'
 import { trackLabels, useTrackClick } from './useTrack'
+import { FlashsignerAction } from '../models/flashsigner'
 
 export interface onRedeemProps {
   deliverType?: CustomRewardType
@@ -36,12 +41,12 @@ export interface ConfirmRedeemProps {
 }
 
 const isSigningAtom = atom(false)
-const isSendingAtom = atom(false)
 
 export interface TransferState {
   signature?: string
   tx?: Transaction
   customData?: CustomRedeemParams
+  id?: string
 }
 
 export const useSignRedeem = () => {
@@ -59,12 +64,30 @@ export const useSignRedeem = () => {
     async ({ customData, id, onConfirmError }: ConfirmRedeemProps) => {
       setIsRedeeming(true)
       try {
-        const { tx } = await api
-          .getRedeemTransaction(id, walletType === WalletType.Unipass)
-          .catch((err) => {
-            throw new Error(err)
-          })
+        const { tx } = await api.getRedeemTransaction(id, walletType)
 
+        if (walletType === WalletType.Flashsigner) {
+          const url = `${location.origin}${RoutePath.Flashsigner}`
+          UnipassConfig.setRedirectUri(`${RoutePath.RedeemResult}/${id}`)
+          const state: Record<string, any> = {
+            prevPathname: reactLocation.pathname,
+            uuid: id,
+          }
+          if (customData) {
+            state.customData = customData
+          }
+          signMessageWithRedirect(url, {
+            isRaw: false,
+            message: transactionToMessage(
+              transformers.TransformTransaction(tx) as any
+            ),
+            extra: {
+              ...state,
+              action: FlashsignerAction.Redeem,
+            },
+          })
+          return
+        }
         const signTx = await signTransaction(tx).catch((err) => {
           throw new Error(err)
         })
@@ -93,7 +116,11 @@ export const useSignRedeem = () => {
             customData,
           })
         }
-      } catch (error) {
+      } catch (error: any) {
+        if (error?.response?.data?.code === 1032) {
+          toast(t('exchange.not-on-chain'))
+          return
+        }
         setIsRedeeming(false)
         toast(t('exchange.error'))
         await onConfirmError?.()
@@ -124,13 +151,6 @@ export const useSignRedeem = () => {
       item,
     }: onRedeemProps) => {
       if (!isAllow) {
-        return
-      }
-      if (walletType === WalletType.Flashsigner) {
-        confirmDialog({
-          type: 'warning',
-          title: t('exchange.flashsigner'),
-        })
         return
       }
       trackReedeem(trackLabels.apps.redeem)
@@ -167,33 +187,5 @@ export const useSignRedeem = () => {
     onRedeem,
     confirmRedeem,
     isRedeeming,
-  }
-}
-
-export const useSendRedeem = () => {
-  const api = useAPI()
-  const reactLocation = useLocation<TransferState>()
-
-  const [isSending, setIsSending] = useAtom(isSendingAtom)
-  const { id } = useParams<{ id: string }>()
-  const sendRedeemTransaction = useCallback(async () => {
-    const { tx, customData, signature } = reactLocation.state
-    try {
-      if (tx) {
-        await api.redeem({ tx, uuid: id, customData })
-      }
-      if (signature) {
-        const { tx } = await api.getRedeemTransaction(id, true)
-        await api.redeem({ tx, uuid: id, customData, sig: signature })
-      }
-    } catch (error) {
-      //
-    }
-    setIsSending(true)
-  }, [api, reactLocation.state, id, setIsSending])
-
-  return {
-    isSending,
-    sendRedeemTransaction,
   }
 }

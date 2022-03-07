@@ -1,4 +1,5 @@
 import * as Bowser from 'bowser'
+import { Config } from '@nervina-labs/flashsigner'
 type ChainType = 'mainnet' | 'testnet'
 
 export const BOWSER_BROWSER = Bowser.getParser(window.navigator.userAgent)
@@ -73,14 +74,16 @@ export const UNIPASS_URL = IS_MAINNET
   ? 'https://unipass.xyz'
   : 'https://t.unipass.xyz'
 
-const FLASH_SIGNER_DEV_URL =
-  process.env.NODE_ENV === 'development'
-    ? 'http://localhost:3000'
-    : 'https://flashsigner.work'
+export const FLASH_SIGNER_URL = process.env.REACT_APP_FLASH_SIGNER_URL
 
-export const FLASH_SIGNER_URL =
-  process.env.REACT_APP_FLASH_SIGNER_URL ??
-  (IS_MAINNET ? 'https://flashsigner.com' : FLASH_SIGNER_DEV_URL)
+if (IS_MAINNET) {
+  Config.setChainType('mainnet')
+} else {
+  Config.setChainType('testnet')
+  if (FLASH_SIGNER_URL) {
+    Config.setFlashsignerURL(FLASH_SIGNER_URL)
+  }
+}
 
 export const RED_ENVELOP_APP_URL = IS_MAINNET
   ? 'https://gift.unipass.xyz'
@@ -99,6 +102,6 @@ export const DAS_INDEXER_URL =
 export const HOST = location.origin
 
 export const ISSUER_ID_REG = /^ISSUER-.{40}$/
-export const TOKEN_CLASS_ID_REG = /^0x.{48}$/
+export const TOKEN_CLASS_ID_REGS = [/^0x.{48}$/, /^0x.{40}/]
 export const IS_SUPPORT_AR =
   !IS_WEXIN && document.createElement('a').relList.supports('ar')

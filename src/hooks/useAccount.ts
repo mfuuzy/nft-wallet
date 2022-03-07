@@ -1,4 +1,5 @@
 import { atom, useAtom } from 'jotai'
+import { loginWithRedirect } from '@nervina-labs/flashsigner'
 import { Address, DefaultSigner, Provider, Transaction } from '@lay2/pw-core'
 import { atomWithStorage, useAtomValue, useUpdateAtom } from 'jotai/utils'
 import { useCallback, useMemo } from 'react'
@@ -12,7 +13,8 @@ import { RoutePath } from '../routes'
 import {
   generateUnipassLoginUrl,
   generateUnipassSignUrl,
-  generateFlashsignerLoginUrl,
+  buildFlashsignerOptions,
+  generateOldAddress,
 } from '../utils'
 import UnipassSigner from '../pw/UnipassSigner'
 import { ServerWalletAPI } from '../apis/ServerWalletAPI'
@@ -64,12 +66,20 @@ export function useAccount() {
     return account?.walletType
   }, [account?.walletType])
 
+  const displayAddress = useMemo(() => {
+    if (address) {
+      return generateOldAddress(address, walletType)
+    }
+    return ''
+  }, [walletType, address])
+
   return {
     address,
     email,
     walletType,
     pubkey,
     account,
+    displayAddress,
   }
 }
 
@@ -198,8 +208,7 @@ export function useLogin() {
         case WalletType.Flashsigner:
           return await new Promise<Provider>((resolve) => {
             const url = `${location.origin}${RoutePath.Flashsigner}`
-            const href = generateFlashsignerLoginUrl(url, url)
-            location.href = href
+            loginWithRedirect(url, buildFlashsignerOptions())
             resolve(provider as Provider)
           })
         case WalletType.Metamask:

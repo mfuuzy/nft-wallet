@@ -1,6 +1,10 @@
+/* eslint-disable import/first */
+require('object.fromentries/auto')
+require('array.prototype.flat/auto')
 import React from 'react'
 import ReactDOM from 'react-dom'
 import App from './App'
+import './gt'
 import * as sw from './serviceWorkerRegistration'
 import * as Sentry from '@sentry/react'
 import { Integrations } from '@sentry/tracing'

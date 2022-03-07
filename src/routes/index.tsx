@@ -18,13 +18,15 @@ import { extendTheme } from '@chakra-ui/react'
 import { useTranslation } from 'react-i18next'
 import NFTFallbackImg from '../assets/img/nft-fallback.png'
 import { PwaGuide } from '../components/PwaGuide'
+import { HiddenBar } from '../components/HiddenBar'
+import { useLite } from '../hooks/useLite'
 export * from './path'
 
-export const Routers: React.FC = () => {
-  const { t } = useTranslation('translations')
+export const RouteSwitch: React.FC = () => {
   const { walletType } = useAccount()
   const { isLogined } = useAccountStatus()
   const { login } = useLogin()
+  const { isLite } = useLite()
   useEffect(() => {
     if (isLogined && walletType && walletType === WalletType.Metamask) {
       login(walletType).catch((e) => {
@@ -34,6 +36,36 @@ export const Routers: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  return (
+    <>
+      <Switch>
+        {routes.map((route) => (
+          <Route
+            {...route}
+            key={route.key}
+            path={`${route.path}${route.params ?? ''}`}
+          />
+        ))}
+        <Redirect
+          exact
+          from={RoutePath.Launch}
+          to={isLogined ? RoutePath.NFTs : RoutePath.Explore}
+        />
+        <Redirect
+          exact
+          from="/nfts"
+          to={isLogined ? RoutePath.NFTs : RoutePath.Explore}
+        />
+        <Route path="/alipay.htm" />
+        <Route component={NotFound} path="*" />
+      </Switch>
+      {isLite ? null : <HiddenBar />}
+    </>
+  )
+}
+
+export const Routers: React.FC = () => {
+  const { t } = useTranslation('translations')
   const theme = useMemo(() => {
     const font = `"PingFang SC", Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
       "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
@@ -61,6 +93,9 @@ export const Routers: React.FC = () => {
         process: {
           500: '#02C2C6',
         },
+        sendRedEnvelope: {
+          600: '#CAA255',
+        },
       },
     })
   }, [t])
@@ -71,27 +106,7 @@ export const Routers: React.FC = () => {
         <RouterProvider>
           <AccountChange>
             <LoadableComponent>
-              <Switch>
-                {routes.map((route) => (
-                  <Route
-                    {...route}
-                    key={route.key}
-                    path={`${route.path}${route.params ?? ''}`}
-                  />
-                ))}
-                <Redirect
-                  exact
-                  from={RoutePath.Launch}
-                  to={isLogined ? RoutePath.NFTs : RoutePath.Explore}
-                />
-                <Redirect
-                  exact
-                  from="/nfts"
-                  to={isLogined ? RoutePath.NFTs : RoutePath.Explore}
-                />
-                <Route path="/alipay.htm" />
-                <Route component={NotFound} path="*" />
-              </Switch>
+              <RouteSwitch />
             </LoadableComponent>
             <ConfirmDialog />
           </AccountChange>

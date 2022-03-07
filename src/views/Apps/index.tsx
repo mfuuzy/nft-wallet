@@ -2,7 +2,7 @@
 import React, { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import styled from 'styled-components'
-import { HiddenBar, HiddenBarFill } from '../../components/HiddenBar'
+import { HiddenBarFill } from '../../components/HiddenBar'
 import { MainContainer } from '../../styles'
 import Exhibition from '../../assets/img/exhibition2.png'
 import PlzWait from '../../assets/img/plz-wait.png'
@@ -14,7 +14,7 @@ import Exchange from '../../assets/svg/exchange2.svg'
 import Vip from '../../assets/svg/vip2.svg'
 import ShopBg from '../../assets/svg/shop-bg.svg'
 import classNames from 'classnames'
-import { RED_ENVELOP_APP_URL, TICKET_APP_URL } from '../../constants'
+import { TICKET_APP_URL } from '../../constants'
 import { RoutePath } from '../../routes'
 import { useHistory } from 'react-router-dom'
 import { useAccount } from '../../hooks/useAccount'
@@ -226,7 +226,7 @@ export const Apps: React.FC = () => {
       color: '#FFF6F1',
       available: true,
       onClick: () => {
-        location.href = getAppUrl(RED_ENVELOP_APP_URL)
+        history.push(RoutePath.RedEnvelope)
         trackClick(trackLabels.apps.pocket)
       },
     },
@@ -297,7 +297,6 @@ export const Apps: React.FC = () => {
       <br />
       <br />
       <br />
-      <HiddenBar alwaysShow />
       <HiddenBarFill />
     </Container>
   )
